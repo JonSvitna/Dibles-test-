@@ -1,23 +1,14 @@
-import { getDummyData } from './maprDummy';
 import type { Student, MapRResult, StudentWithResults } from './types';
-import { isDemoMode } from './env';
+import { getStudents as getStoredStudents, getMapRResults as getStoredResults, getMCAPResults } from './storage';
 
 // Get all students
 export function getStudents(): Student[] {
-  if (isDemoMode()) {
-    return getDummyData().students;
-  }
-  // TODO: Fetch from API in future
-  return [];
+  return getStoredStudents();
 }
 
 // Get all MAP-R results
 export function getMapRResults(): MapRResult[] {
-  if (isDemoMode()) {
-    return getDummyData().results;
-  }
-  // TODO: Fetch from API in future
-  return [];
+  return getStoredResults();
 }
 
 // Get a single student by ID
@@ -38,9 +29,12 @@ export function getStudentWithResults(studentId: string): StudentWithResults | u
   if (!student) return undefined;
   
   const results = getStudentResults(studentId);
+  const mcapResults = getMCAPResults().filter(r => r.student_id === studentId);
+  
   return {
     ...student,
     results,
+    mcapResults: mcapResults.length > 0 ? mcapResults : undefined,
   };
 }
 

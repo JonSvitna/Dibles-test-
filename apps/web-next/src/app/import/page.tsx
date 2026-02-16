@@ -7,25 +7,83 @@ import Wizard from '@/components/Wizard';
 import Card from '@/components/Card';
 import FileDropzone from '@/components/FileDropzone';
 import Table from '@/components/Table';
-import ValidationPanel from '@/components/ValidationPanel';
 import Button from '@/components/Button';
-import type { Program } from '@/lib/types';
+import ProgramPicker from '@/components/ProgramPicker';
+import TermPicker from '@/components/TermPicker';
+import DataQualityPanel from '@/components/DataQualityPanel';
+import MappingProfileModal from '@/components/MappingProfileModal';
+import type { Program, Term, ParsedRow, ColumnMapping, ValidationIssue } from '@/lib/types';
+import { parseCsv } from '@/lib/parseCsv';
+import { parseXlsx } from '@/lib/parseXlsx';
+import { autoMatchColumns } from '@/lib/mappingProfiles';
+import { validateData } from '@/lib/validation';
+import { importMapRData, importMCAPData } from '@/lib/storage';
 
 export default function ImportPage() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(0);
   const [selectedProgram, setSelectedProgram] = useState<Program | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedTerm, setSelectedTerm] = useState<Term>('Fall');
+  const [parsedData, setParsedData] = useState<ParsedRow[]>([]);
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [mapping, setMapping] = useState<ColumnMapping>({});
+  const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
+  const [showMappingModal, setShowMappingModal] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
 
   const steps = [
     { title: 'Program', description: 'Choose assessment' },
     { title: 'Upload', description: 'Select file' },
     { title: 'Preview', description: 'Review data' },
+    { title: 'Map Columns', description: 'Match fields' },
     { title: 'Validate', description: 'Check issues' },
     { title: 'Complete', description: 'Finish import' },
   ];
 
+  const handleFileSelect = async (file: File) => {
+    setSelectedFile(file);
+    setParseError(null);
+
+    try {
+      // Parse file based on type
+      let result;
+      if (file.name.endsWith('.csv')) {
+        result = await parseCsv(file);
+      } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+        result = await parseXlsx(file);
+      } else {
+        setParseError('Unsupported file type. Please upload a CSV or Excel file.');
+        return;
+      }
+
+      if (result.errors.length > 0) {
+        setParseError(result.errors.join(', '));
+        return;
+      }
+
+      setParsedData(result.data);
+      setHeaders(result.headers);
+
+      // Auto-match columns if we have a program selected
+      if (selectedProgram) {
+        const autoMapping = autoMatchColumns(result.headers, selectedProgram);
+        setMapping(autoMapping);
+      }
+    } catch (error) {
+      setParseError(`Failed to parse file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
   const handleNext = () => {
+    if (currentStep === 3) {
+      // Run validation before moving to validation step
+      if (selectedProgram) {
+        const issues = validateData(parsedData, selectedProgram, mapping, selectedTerm);
+        setValidationIssues(issues);
+      }
+    }
+    
     if (currentStep < steps.length - 1) {
       setCurrentStep(currentStep + 1);
     }
@@ -38,24 +96,74 @@ export default function ImportPage() {
   };
 
   const handleComplete = () => {
-    // In demo mode, just redirect to reports
-    router.push('/reports');
+    if (!selectedProgram) return;
+
+    try {
+      if (selectedProgram === 'MAP_R') {
+        importMapRData(parsedData, mapping, selectedTerm, {
+          fileName: selectedFile?.name || 'unknown',
+          program: selectedProgram,
+          mappingProfileUsed: undefined,
+        });
+      } else if (selectedProgram === 'MCAP') {
+        importMCAPData(parsedData, mapping, selectedTerm, {
+          fileName: selectedFile?.name || 'unknown',
+          program: selectedProgram,
+          mappingProfileUsed: undefined,
+        });
+      }
+
+      // Redirect to reports
+      router.push('/reports');
+    } catch (error) {
+      alert(`Failed to import data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   const canGoNext = () => {
     if (currentStep === 0) return selectedProgram !== null;
-    if (currentStep === 1) return selectedFile !== null;
+    if (currentStep === 1) return selectedFile !== null && parsedData.length > 0;
+    if (currentStep === 2) return parsedData.length > 0;
+    if (currentStep === 3) {
+      // Check that all required fields are mapped
+      if (!selectedProgram) return false;
+      const requiredFields = selectedProgram === 'MAP_R'
+        ? ['student_id', 'first_name', 'last_name', 'grade', 'rit', 'percentile']
+        : ['student_id', 'first_name', 'last_name', 'grade'];
+      return requiredFields.every((field) => mapping[field]);
+    }
+    if (currentStep === 4) {
+      // Can proceed if no errors (warnings are OK)
+      return validationIssues.filter((i) => i.severity === 'error').length === 0;
+    }
     return true;
   };
 
-  // Sample preview data (using dummy data for demo)
-  const previewData = [
-    { studentId: 'STU00001', name: 'Emma Smith', grade: 1, rit: 170, percentile: 52 },
-    { studentId: 'STU00002', name: 'Liam Johnson', grade: 2, rit: 180, percentile: 55 },
-    { studentId: 'STU00003', name: 'Olivia Williams', grade: 3, rit: 190, percentile: 58 },
-    { studentId: 'STU00004', name: 'Noah Brown', grade: 4, rit: 200, percentile: 60 },
-    { studentId: 'STU00005', name: 'Ava Jones', grade: 5, rit: 210, percentile: 65 },
-  ];
+  const handleApplyMapping = (newMapping: ColumnMapping) => {
+    setMapping(newMapping);
+  };
+
+  const handleSaveProfile = (name: string, profileMapping: ColumnMapping) => {
+    if (!selectedProgram) return;
+    // Profile is saved inside the modal via mappingProfiles.ts
+  };
+
+  // Get preview columns based on current mapping
+  const getPreviewColumns = () => {
+    if (headers.length === 0) return [];
+    
+    // Show first 5 columns or all if less than 5
+    return headers.slice(0, Math.min(5, headers.length)).map((header) => ({
+      key: header,
+      label: header,
+      align: 'left' as const,
+    }));
+  };
+
+  const getPreviewData = () => {
+    // Show first 10 rows
+    return parsedData.slice(0, 10);
+  };
 
   return (
     <div>
@@ -71,50 +179,7 @@ export default function ImportPage() {
       >
         {/* Step 1: Choose Program */}
         {currentStep === 0 && (
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">
-              Choose Assessment Program
-            </h2>
-            <p className="text-gray-600 mb-6">
-              Select the type of assessment data you want to import.
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Card
-                className={`p-6 cursor-pointer transition-all ${
-                  selectedProgram === 'MAP_R'
-                    ? 'border-2 border-blue-600 bg-blue-50'
-                    : 'hover:bg-gray-50'
-                }`}
-                onClick={() => setSelectedProgram('MAP_R')}
-              >
-                <div className="text-center">
-                  <div className="text-5xl mb-3">📊</div>
-                  <h3 className="text-xl font-bold text-gray-900 mb-2">MAP-R</h3>
-                  <p className="text-sm text-gray-600">
-                    MAP Reading assessment data with RIT scores and percentiles
-                  </p>
-                </div>
-              </Card>
-
-              <Card
-                className={`p-6 cursor-pointer transition-all ${
-                  selectedProgram === 'MCAP'
-                    ? 'border-2 border-blue-600 bg-blue-50'
-                    : 'hover:bg-gray-50'
-                }`}
-                onClick={() => setSelectedProgram('MCAP')}
-              >
-                <div className="text-center">
-                  <div className="text-5xl mb-3">📝</div>
-                  <h3 className="text-xl font-bold text-gray-900 mb-2">MCAP</h3>
-                  <p className="text-sm text-gray-600">
-                    Maryland Comprehensive Assessment Program data
-                  </p>
-                </div>
-              </Card>
-            </div>
-          </div>
+          <ProgramPicker selected={selectedProgram} onSelect={setSelectedProgram} />
         )}
 
         {/* Step 2: Upload File */}
@@ -125,15 +190,22 @@ export default function ImportPage() {
               Upload your {selectedProgram} data file. Supported formats: Excel (.xlsx, .xls) and CSV (.csv)
             </p>
 
-            <FileDropzone onFileSelect={setSelectedFile} />
+            <FileDropzone onFileSelect={handleFileSelect} />
 
-            {selectedFile && (
-              <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm text-blue-800">
-                  <strong>Note:</strong> In demo mode, file parsing is disabled. 
-                  The system will use sample data for preview and validation.
+            {parseError && (
+              <Card className="mt-6 p-4 bg-red-50 border-red-200">
+                <p className="text-sm text-red-800">
+                  <strong>Error:</strong> {parseError}
                 </p>
-              </div>
+              </Card>
+            )}
+
+            {selectedFile && parsedData.length > 0 && (
+              <Card className="mt-6 p-4 bg-green-50 border-green-200">
+                <p className="text-sm text-green-800">
+                  ✅ File parsed successfully! Found {parsedData.length} rows.
+                </p>
+              </Card>
             )}
           </div>
         )}
@@ -146,58 +218,87 @@ export default function ImportPage() {
               Review the first few rows of your data to ensure it looks correct.
             </p>
 
-            <Card className="p-4 mb-4 bg-yellow-50 border-yellow-200">
-              <p className="text-sm text-yellow-800">
-                <strong>Demo Mode:</strong> Showing sample data for demonstration purposes.
-              </p>
-            </Card>
-
-            <Table
-              columns={[
-                { key: 'studentId', label: 'Student ID', align: 'left' },
-                { key: 'name', label: 'Name', align: 'left' },
-                { key: 'grade', label: 'Grade', align: 'center' },
-                { key: 'rit', label: 'RIT', align: 'center' },
-                { key: 'percentile', label: 'Percentile', align: 'center' },
-              ]}
-              data={previewData}
-            />
-
-            <p className="mt-4 text-sm text-gray-500">
-              Showing 5 of 200 rows
-            </p>
+            {parsedData.length > 0 ? (
+              <>
+                <Table columns={getPreviewColumns()} data={getPreviewData()} />
+                <p className="mt-4 text-sm text-gray-500">
+                  Showing {Math.min(10, parsedData.length)} of {parsedData.length} rows
+                </p>
+              </>
+            ) : (
+              <Card className="p-8 text-center text-gray-500">No data to preview</Card>
+            )}
           </div>
         )}
 
-        {/* Step 4: Validate */}
+        {/* Step 4: Column Mapping */}
         {currentStep === 3 && (
           <div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Validation</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Column Mapping</h2>
             <p className="text-gray-600 mb-6">
-              Checking your data for any issues or inconsistencies.
+              We've auto-matched your columns. Review and adjust if needed.
             </p>
 
-            <ValidationPanel issues={[]} />
+            <Card className="p-6 mb-4">
+              <h3 className="font-semibold text-gray-900 mb-3">Current Mapping</h3>
+              <div className="space-y-2">
+                {Object.entries(mapping).map(([field, column]) => (
+                  <div key={field} className="flex justify-between items-center text-sm">
+                    <span className="font-medium text-gray-700">
+                      {field.replace(/_/g, ' ').toUpperCase()}:
+                    </span>
+                    <span className="text-gray-600">{column || '(not mapped)'}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
 
-            <div className="mt-6">
-              <Card className="p-4 bg-green-50 border-green-200">
-                <p className="text-sm text-green-800">
-                  ✅ All validation checks passed. Your data is ready to import.
+            {selectedProgram === 'MAP_R' && !mapping['term'] && (
+              <Card className="p-4 mb-4 bg-yellow-50 border-yellow-200">
+                <h4 className="font-medium text-gray-900 mb-2">Term Selection Required</h4>
+                <p className="text-sm text-gray-600 mb-3">
+                  Your file doesn't have a term column. Please select which term this data is for:
                 </p>
+                <TermPicker selected={selectedTerm} onSelect={setSelectedTerm} label="" />
               </Card>
+            )}
+
+            <div className="flex justify-center">
+              <Button onClick={() => setShowMappingModal(true)} variant="outline">
+                Adjust Column Mapping
+              </Button>
             </div>
           </div>
         )}
 
-        {/* Step 5: Complete */}
+        {/* Step 5: Validate */}
         {currentStep === 4 && (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Data Quality Check</h2>
+            <p className="text-gray-600 mb-6">
+              Checking your data for any issues or inconsistencies.
+            </p>
+
+            <DataQualityPanel issues={validationIssues} />
+
+            {validationIssues.filter((i) => i.severity === 'error').length === 0 && (
+              <Card className="mt-6 p-4 bg-blue-50 border-blue-200">
+                <p className="text-sm text-blue-800">
+                  ℹ️ You can proceed with the import. Any warnings shown above are optional to fix.
+                </p>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* Step 6: Complete */}
+        {currentStep === 5 && (
           <div className="text-center py-8">
             <div className="text-6xl mb-4">🎉</div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">
-              Import Complete!
-            </h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Import Complete!</h2>
             <p className="text-gray-600 mb-8">
-              Your data has been successfully imported. You can now view reports and analyze student performance.
+              Your data has been successfully imported. You can now view reports and analyze student
+              performance.
             </p>
 
             <div className="flex justify-center gap-4">
@@ -211,6 +312,19 @@ export default function ImportPage() {
           </div>
         )}
       </Wizard>
+
+      {/* Mapping Profile Modal */}
+      {selectedProgram && (
+        <MappingProfileModal
+          isOpen={showMappingModal}
+          onClose={() => setShowMappingModal(false)}
+          program={selectedProgram}
+          headers={headers}
+          currentMapping={mapping}
+          onApplyMapping={handleApplyMapping}
+          onSaveProfile={handleSaveProfile}
+        />
+      )}
     </div>
   );
 }
