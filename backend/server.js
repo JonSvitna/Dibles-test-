@@ -33,7 +33,11 @@ app.get('/api/county-tests', (req, res) => {
 // Error handling
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+  res.status(500).json({ 
+    error: isDevelopment ? err.message : 'Something went wrong!',
+    ...(isDevelopment && { stack: err.stack })
+  });
 });
 
 app.listen(PORT, () => {
