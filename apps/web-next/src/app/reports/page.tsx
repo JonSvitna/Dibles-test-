@@ -27,13 +27,6 @@ export default function ReportsPage() {
     }
   };
 
-  const handleResetData = () => {
-    if (confirm('Are you sure you want to reset all data? This will return to demo mode with sample data.')) {
-      resetData();
-      window.location.reload();
-    }
-  };
-
   // MAP-R Data
   const bandDistribution = getBandDistribution(selectedTerm);
   const gradeStats = getAverageRITByGrade(selectedTerm);
