@@ -19,27 +19,37 @@ export default async function StudentProfilePage({ params }: StudentProfilePageP
     notFound();
   }
 
-  const { student_id, first_name, last_name, grade, results } = studentWithResults;
+  const { student_id, first_name, last_name, grade, results, mcapResults } = studentWithResults;
 
-  // Calculate growth (Spring - Fall)
+  // Calculate MAP-R growth (Spring - Fall)
   const fallResult = results.find((r) => r.term === 'Fall');
   const springResult = results.find((r) => r.term === 'Spring');
   const growth =
     fallResult && springResult ? springResult.rit - fallResult.rit : null;
 
-  // Sort results by term order
+  // Sort MAP-R results by term order
   const termOrder: Record<Term, number> = { Fall: 1, Winter: 2, Spring: 3 };
   const sortedResults = [...results].sort(
     (a, b) => termOrder[a.term] - termOrder[b.term]
   );
 
-  // Prepare table data
-  const tableData = sortedResults.map((r) => ({
+  // Prepare MAP-R table data
+  const maprTableData = sortedResults.map((r) => ({
     term: r.term,
     rit: r.rit,
     percentile: `${r.ach_pct}%`,
     band: r.band,
   }));
+
+  // Prepare MCAP table data
+  const mcapTableData = mcapResults?.map((r) => ({
+    season: r.season,
+    orgPurpose: r.organization_purpose !== undefined ? r.organization_purpose : 'N/A',
+    evidence: r.evidence_elaboration !== undefined ? r.evidence_elaboration : 'N/A',
+    conventions: r.conventions !== undefined ? r.conventions : 'N/A',
+    total: r.total_score !== undefined ? r.total_score : 'N/A',
+    performanceLabel: r.performance_label || 'N/A',
+  })) || [];
 
   return (
     <div>
@@ -83,8 +93,8 @@ export default async function StudentProfilePage({ params }: StudentProfilePageP
         </div>
       </Card>
 
-      {/* MAP-R Results Table */}
-      <Card className="p-6">
+      {/* MAP-R Results Section */}
+      <Card className="p-6 mb-6">
         <h2 className="text-xl font-bold text-gray-900 mb-4">MAP-R Results</h2>
         {results.length > 0 ? (
           <Table
@@ -94,10 +104,35 @@ export default async function StudentProfilePage({ params }: StudentProfilePageP
               { key: 'percentile', label: 'Percentile', align: 'center' },
               { key: 'band', label: 'Performance Band', align: 'center' },
             ]}
-            data={tableData}
+            data={maprTableData}
           />
         ) : (
-          <p className="text-gray-500 text-center py-8">No results available</p>
+          <p className="text-gray-500 text-center py-8">No MAP-R results available</p>
+        )}
+      </Card>
+
+      {/* MCAP Results Section */}
+      <Card className="p-6">
+        <h2 className="text-xl font-bold text-gray-900 mb-4">MCAP Writing Results</h2>
+        {mcapTableData.length > 0 ? (
+          <>
+            <Table
+              columns={[
+                { key: 'season', label: 'Season', align: 'left' },
+                { key: 'orgPurpose', label: 'Org/Purpose', align: 'center' },
+                { key: 'evidence', label: 'Evidence/Elab', align: 'center' },
+                { key: 'conventions', label: 'Conventions', align: 'center' },
+                { key: 'total', label: 'Total', align: 'center' },
+                { key: 'performanceLabel', label: 'Performance Level', align: 'center' },
+              ]}
+              data={mcapTableData}
+            />
+            <p className="mt-4 text-xs text-gray-500 italic">
+              Rubric scores range from 0-4. Total is the sum of all three categories.
+            </p>
+          </>
+        ) : (
+          <p className="text-gray-500 text-center py-8">No MCAP results available</p>
         )}
       </Card>
     </div>

@@ -1,8 +1,12 @@
 import Link from 'next/link';
 import Card from '@/components/Card';
 import PageHeader from '@/components/PageHeader';
+import { getDataMode, getImportMetadata } from '@/lib/storage';
 
 export default function HomePage() {
+  const mode = getDataMode();
+  const metadata = getImportMetadata();
+
   const actionCards = [
     {
       title: 'Import New Scores',
@@ -34,10 +38,16 @@ export default function HomePage() {
     },
   ];
 
+  const lastImport = metadata
+    ? new Date(metadata.timestamp).toLocaleDateString()
+    : mode === 'demo'
+    ? 'Demo Data'
+    : 'No imports yet';
+
   return (
     <div>
       <PageHeader
-        title="Welcome to MAP-R Assessment Platform"
+        title="Welcome to Assessment Platform"
         subtitle="Select an action below to get started"
       />
 
@@ -46,15 +56,19 @@ export default function HomePage() {
         <div className="flex justify-between items-center flex-wrap gap-4">
           <div>
             <span className="text-sm text-gray-600">Last Import:</span>
-            <span className="ml-2 font-semibold text-gray-900">Demo Seed</span>
+            <span className="ml-2 font-semibold text-gray-900">{lastImport}</span>
           </div>
           <div>
-            <span className="text-sm text-gray-600">Data Issues:</span>
-            <span className="ml-2 font-semibold text-green-600">0</span>
+            <span className="text-sm text-gray-600">Mode:</span>
+            <span className={`ml-2 font-semibold ${mode === 'live' ? 'text-green-600' : 'text-blue-600'}`}>
+              {mode === 'live' ? 'Live Mode' : 'Demo Mode'}
+            </span>
           </div>
           <div>
             <span className="text-sm text-gray-600">Program:</span>
-            <span className="ml-2 font-semibold text-blue-600">MAP-R Demo</span>
+            <span className="ml-2 font-semibold text-blue-600">
+              {metadata?.program || 'MAP-R Demo'}
+            </span>
           </div>
         </div>
       </Card>
